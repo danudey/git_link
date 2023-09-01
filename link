@@ -93,7 +93,7 @@ def get_branch_remote_url(branch_name=None):
     remote = repo.remote(remote_name)
     remote_url = next(remote.urls)
 
-    project_name = GITHUB_PROJECT_PAT.findall(remote_url)[0]
+    project_name = GITHUB_PROJECT_PAT.match(remote_url).group(1)
 
     github_url = f"{GITHUB_BASE_URL}/{project_name}/tree/{remote_head}"
     print(github_url)
