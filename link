@@ -15,15 +15,16 @@ GITHUB_BASE_URL = "https://github.com"
 
 try:
     # Get from environ if possible (in case we want to override)
-    GITHUB_TOKEN = os.environ['GITHUB_TOKEN']
+    GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 except:
     # Otherwise, get it from `gh` command configuration
-    yaml_file = pathlib.Path('~/.config/gh/hosts.yml').expanduser().open()
+    yaml_file = pathlib.Path("~/.config/gh/hosts.yml").expanduser().open()
     yaml_doc = yaml.safe_load(yaml_file)
-    GITHUB_TOKEN = yaml_doc['github.com']['oauth_token']
+    GITHUB_TOKEN = yaml_doc["github.com"]["oauth_token"]
 
 repo = git.Repo()
 gh = Github(GITHUB_TOKEN)
+
 
 def get_commit_remote_url(commit_or_ref=None):
     if commit_or_ref:
@@ -40,18 +41,19 @@ def get_commit_remote_url(commit_or_ref=None):
     github_url = f"{GITHUB_BASE_URL}/{project_name}/commit/{commit_hex}"
     print(github_url)
 
+
 def get_pr_remote_url(branch_name=None):
     if branch_name is None:
         local_branch = repo.active_branch
     else:
         local_branch = repo.branches[branch_name]
-    
+
     remote_head = local_branch.tracking_branch().remote_head
     remote_name = local_branch.tracking_branch().remote_name
 
     remote = repo.remote(remote_name)
     remote_url = next(remote.urls)
-    
+
     project_name, github_username = GITHUB_PROJECT_PAT.match(remote_url).groups()
 
     gh_project = gh.get_repo(project_name)
@@ -65,18 +67,19 @@ def get_pr_remote_url(branch_name=None):
         for pr in prs:
             print(f"{pr.title}: {pr.html_url}")
 
+
 def get_branch_remote_url(branch_name=None):
     if branch_name is None:
         local_branch = repo.active_branch
     else:
         local_branch = repo.branches[branch_name]
-    
+
     remote_head = local_branch.tracking_branch().remote_head
     remote_name = local_branch.tracking_branch().remote_name
 
     remote = repo.remote(remote_name)
     remote_url = next(remote.urls)
-    
+
     project_name = GITHUB_PROJECT_PAT.findall(remote_url)[0]
 
     github_url = f"{GITHUB_BASE_URL}/{project_name}/tree/{remote_head}"
@@ -86,7 +89,7 @@ def get_branch_remote_url(branch_name=None):
 parser = argparse.ArgumentParser()
 
 parser.add_argument("command", help="What to run")
-parser.add_argument("parameter", nargs='*')
+parser.add_argument("parameter", nargs="*")
 
 args = parser.parse_args()
 
