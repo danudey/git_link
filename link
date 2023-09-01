@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 
+"""
+A simple script to get links for branches, commits, or PRs
+"""
+
 import os
 import re
 import pathlib
@@ -16,9 +20,9 @@ GITHUB_BASE_URL = "https://github.com"
 try:
     # Get from environ if possible (in case we want to override)
     GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
-except:
+except KeyError:
     # Otherwise, get it from `gh` command configuration
-    yaml_file = pathlib.Path("~/.config/gh/hosts.yml").expanduser().open()
+    yaml_file = pathlib.Path("~/.config/gh/hosts.yml").expanduser().open(encoding="utf8")
     yaml_doc = yaml.safe_load(yaml_file)
     GITHUB_TOKEN = yaml_doc["github.com"]["oauth_token"]
 
@@ -27,6 +31,9 @@ gh = Github(GITHUB_TOKEN)
 
 
 def get_commit_remote_url(commit_or_ref=None):
+    """
+    Get the remote URL for a given commit (or the current one)
+    """
     if commit_or_ref:
         commit_obj = repo.rev_parse(commit_or_ref)
     else:
@@ -43,12 +50,15 @@ def get_commit_remote_url(commit_or_ref=None):
 
 
 def get_pr_remote_url(branch_name=None):
+    """
+    Get the remote URL for PRs using the specified (or current)
+    branch as a HEAD
+    """
     if branch_name is None:
         local_branch = repo.active_branch
     else:
         local_branch = repo.branches[branch_name]
 
-    remote_head = local_branch.tracking_branch().remote_head
     remote_name = local_branch.tracking_branch().remote_name
 
     remote = repo.remote(remote_name)
@@ -64,11 +74,14 @@ def get_pr_remote_url(branch_name=None):
     if not prs:
         print(f"No PRs found for {github_username}:{local_branch.name}")
     else:
-        for pr in prs:
-            print(f"{pr.title}: {pr.html_url}")
+        for pull_request in prs:
+            print(f"{pull_request.title}: {pull_request.html_url}")
 
 
 def get_branch_remote_url(branch_name=None):
+    """
+    Get the remote URL for the specified (or current) branch
+    """
     if branch_name is None:
         local_branch = repo.active_branch
     else:
