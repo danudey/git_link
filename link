@@ -13,6 +13,11 @@ import git
 import yaml
 from github import Github
 
+from rich.console import Console
+from rich import print
+
+console = Console(highlight=False)
+
 GITHUB_PROJECT_PAT = re.compile(r"git@github.com:((.*)/.*)\.git$")
 
 GITHUB_BASE_URL = "https://github.com"
@@ -26,7 +31,7 @@ except KeyError:
     yaml_doc = yaml.safe_load(yaml_file)
     GITHUB_TOKEN = yaml_doc["github.com"]["oauth_token"]
 
-repo = git.Repo()
+repo = git.Repo(search_parent_directories=True)
 gh = Github(GITHUB_TOKEN)
 
 
@@ -66,16 +71,26 @@ def get_pr_remote_url(branch_name=None):
 
     project_name, github_username = GITHUB_PROJECT_PAT.match(remote_url).groups()
 
+    if args.closed:
+        state = "all"
+    else:
+        state = "open"
     gh_project = gh.get_repo(project_name)
-    prs = gh_project.get_pulls(head=f"{github_username}:{local_branch.name}")
+    prs = gh_project.get_pulls(head=f"{github_username}:{local_branch.name}", state=state)
 
     prs = list(prs)
 
     if not prs:
-        print(f"No PRs found for {github_username}:{local_branch.name}")
+        console.print(f"No PRs found for {github_username}:{local_branch.name}")
     else:
         for pull_request in prs:
-            print(f"{pull_request.title}: {pull_request.html_url}")
+            if pull_request.state == 'closed':
+                closed = '[red] (closed)[/red]'
+                state_icon = "[purple]\uf407[/purple]"
+            else:
+                closed = ''
+                state_icon = "[green]\uf407[/green]"
+            console.print(f"{state_icon} {pull_request.title}{closed}: [link={pull_request.html_url}]{pull_request.html_url}[/link]")
 
 
 def get_branch_remote_url(branch_name=None):
@@ -96,13 +111,14 @@ def get_branch_remote_url(branch_name=None):
     project_name = GITHUB_PROJECT_PAT.match(remote_url).group(1)
 
     github_url = f"{GITHUB_BASE_URL}/{project_name}/tree/{remote_head}"
-    print(github_url)
+    console.print(f"[link={github_url}]{github_url}[/link]")
 
 
 parser = argparse.ArgumentParser()
 
 parser.add_argument("command", help="What to run")
-parser.add_argument("parameter", nargs="*")
+parser.add_argument("--closed", action="store_true", help="Also look for closed PRs")
+parser.add_argument("parameter", nargs="*", help="The targets to search for links to (default: current branch)")
 
 args = parser.parse_args()
 
