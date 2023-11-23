@@ -74,7 +74,7 @@ def get_remote_ref_name(branch_name=None):
                 remote_name = remote.name
                 print(f"Using detected remote {remote}", file=sys.stderr)
         if remote_name is None:
-            print(f"Found no remotes with matching branches, using `origin` anyway.", file=sys.stderr)
+            print("Found no remotes with matching branches, using `origin` anyway.", file=sys.stderr)
             remote_name = "origin"
     else:
         remote_name = remote_branch.remote_name
