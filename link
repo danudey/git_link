@@ -6,8 +6,11 @@ A simple script to get links for branches, commits, or PRs
 
 import os
 import re
+import sys
 import pathlib
 import argparse
+
+from types import SimpleNamespace
 
 import git
 import yaml
@@ -53,35 +56,91 @@ def get_commit_remote_url(commit_or_ref=None):
     github_url = f"{GITHUB_BASE_URL}/{project_name}/commit/{commit_hex}"
     print(github_url)
 
-
-def get_pr_remote_url(branch_name=None):
-    """
-    Get the remote URL for PRs using the specified (or current)
-    branch as a HEAD
-    """
+def get_remote_ref_name(branch_name=None):
     if branch_name is None:
         local_branch = repo.active_branch
     else:
         local_branch = repo.branches[branch_name]
 
-    remote_name = local_branch.tracking_branch().remote_name
+    remote_branch = local_branch.tracking_branch()
+    if remote_branch is None:
+        remote_name = None
+        # TODO: Either check all remotes for a matching branch, or get the first
+        # remote specified, whatever it's called (it may not be 'origin')
+        print(f"Local branch {local_branch} has no tracking branch, searching remotes", file=sys.stderr)
+        for remote in repo.remotes:
+            if local_branch.name in remote:
+                remote_name = remote.name
+                print(f"Using detected remote {remote}", file=sys.stderr)
+        if remote_name is None:
+            print(f"Found no remotes with matching branches, using `origin` anyway.", file=sys.stderr)
+            remote_name = "origin"
+    else:
+        remote_name = remote_branch.remote_name
 
     remote = repo.remote(remote_name)
     remote_url = next(remote.urls)
 
     project_name, github_username = GITHUB_PROJECT_PAT.match(remote_url).groups()
 
+    return SimpleNamespace(
+            project_name=project_name,
+            github_username=github_username,
+            local_branch=local_branch)
+
+def get_file_remote_url(filepath=''):
+    # Get the current file path for the root of the git working directory (resolving symlinks, etc)
+    git_root = pathlib.Path(repo.working_dir).resolve()
+    # Get the current directory we're in (absolute path, resolving symlinks, etc.)
+    cwd_path = pathlib.Path().resolve()
+
+    # Take off the leading "/" if there is one; otherwise we get an absolute path from Path.joinpath()
+    filepath_rel = filepath.lstrip("/")
+    # Get the target path (assuming the path is relative to our current directory, which is absolute)
+    target_path = cwd_path.joinpath(pathlib.Path(filepath_rel))
+
+    if not target_path.exists():
+        print(f"Warning: specified path {target_path} does not exist locally")
+
+    # Convert the absolute target_path to a relative path, relative to git_root
+    target_file = target_path.relative_to(git_root)
+
+    if target_path == git_root:
+        target_file_name = ""
+    else:
+        target_file_name = target_file.as_posix()
+    # Get the remote ref info (we're assuming a link to the current branch is desired)
+    remote_info = get_remote_ref_name()
+
+    if target_path.is_file():
+        sub_path = "blob"
+    else:
+        sub_path = "tree"
+
+    github_url = f"{GITHUB_BASE_URL}/{remote_info.project_name}/{sub_path}/{remote_info.local_branch.name}/{target_file_name}"
+
+    console.print(f"[link={github_url}]{github_url}[/link]")
+
+
+def get_pr_remote_url(branch_name=None):
+    """
+    Get the remote URL for PRs using the specified (or current)
+    branch as a HEAD
+    """
+
+    remote_info = get_remote_ref_name(branch_name)
+
     if args.closed:
         state = "all"
     else:
         state = "open"
-    gh_project = gh.get_repo(project_name)
-    prs = gh_project.get_pulls(head=f"{github_username}:{local_branch.name}", state=state)
+    gh_project = gh.get_repo(remote_info.project_name)
+    prs = gh_project.get_pulls(head=f"{remote_info.github_username}:{remote_info.local_branch.name}", state=state)
 
     prs = list(prs)
 
     if not prs:
-        console.print(f"No PRs found for {github_username}:{local_branch.name}")
+        console.print(f"No PRs found for {remote_info.github_username}:{remote_info.local_branch.name}")
     else:
         for pull_request in prs:
             if pull_request.state == 'closed':
@@ -141,5 +200,11 @@ match args.command:
                 get_commit_remote_url(param)
         else:
             get_commit_remote_url()
+    case "file":
+        if args.parameter:
+            for param in args.parameter:
+                get_file_remote_url(param)
+        else:
+            get_file_remote_url()
     case _:
         print(f"Unrecognized command: {args.command}")
