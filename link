@@ -7,6 +7,7 @@ A simple script to get links for branches, commits, or PRs
 import os
 import re
 import sys
+import logging
 import pathlib
 import argparse
 
@@ -17,10 +18,21 @@ import yaml
 from github import Github
 
 from rich.console import Console
+from rich.logging import RichHandler
+
 from rich import print
+
+FORMAT = "%(message)s"
+logging.basicConfig(
+    level="WARNING", format=FORMAT, datefmt="[%X]", handlers=[RichHandler()]
+)
+
+log = logging.getLogger("rich")
 
 console = Console(highlight=False)
 
+def link_url(url):
+    return f"[link={url}]{url}[/link]"
 
 # Parse out github project paths. There are two formats:
 #     'ssh': ssh://git@github.com/owner/project/
@@ -45,10 +57,21 @@ try:
     # Get from environ if possible (in case we want to override)
     GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 except KeyError:
-    # Otherwise, get it from `gh` command configuration
-    yaml_file = pathlib.Path("~/.config/gh/hosts.yml").expanduser().open(encoding="utf8")
-    yaml_doc = yaml.safe_load(yaml_file)
-    GITHUB_TOKEN = yaml_doc["github.com"]["oauth_token"]
+    try:
+        # Otherwise, get it from `gh` command configuration
+        yaml_file = pathlib.Path("~/.config/gh/hosts.yml").expanduser().open(encoding="utf8")
+        yaml_doc = yaml.safe_load(yaml_file)
+        GITHUB_TOKEN = yaml_doc["github.com"]["oauth_token"]
+    except FileNotFoundError:
+        message = (
+            "In order to use this command, you must either "
+            "specify the GITHUB_TOKEN environment variable, "
+            "or install and configure the `gh` tool from "
+            "GitHub (recommended):\n"
+            "    https://cli.github.com/manual/ "
+        )
+        log.error(message)
+        sys.exit(1)
 
 repo = git.Repo(search_parent_directories=True)
 gh = Github(GITHUB_TOKEN)
@@ -67,10 +90,12 @@ def get_commit_remote_url(commit_or_ref=None):
     remote = repo.remotes[0]
     remote_url = next(remote.urls)
 
-    project_name = GITHUB_PROJECT_PAT.match(remote_url).group(1)
+    github_project_match = GITHUB_PROJECT_PAT.match(remote_url)
+
+    project_name = github_project_match.group('project_name')
 
     github_url = f"{GITHUB_BASE_URL}/{project_name}/commit/{commit_hex}"
-    print(github_url)
+    console.print(link_url(github_url))
 
 
 def get_remote_ref_name(branch_name=None):
@@ -137,7 +162,7 @@ def get_file_remote_url(filepath=""):
 
     github_url = f"{GITHUB_BASE_URL}/{remote_info.project_name}/{sub_path}/{remote_info.local_branch.name}/{target_file_name}"
 
-    console.print(f"[link={github_url}]{github_url}[/link]")
+    console.print(link_url(github_url))
 
 
 def get_pr_remote_url(branch_name=None):
@@ -161,13 +186,16 @@ def get_pr_remote_url(branch_name=None):
         console.print(f"No PRs found for {remote_info.github_username}:{remote_info.local_branch.name}")
     else:
         for pull_request in prs:
-            if pull_request.state == "closed":
+            if pull_request.merged:
+                closed = " [#8250DF](merged)[/#8250DF]"
+                state_icon = "[#8250DF]\uf407[/#8250DF]"
+            elif pull_request.state == "closed":
                 closed = "[red] (closed)[/red]"
                 state_icon = "[purple]\uf407[/purple]"
             else:
                 closed = ""
                 state_icon = "[green]\uf407[/green]"
-            console.print(f"{state_icon} {pull_request.title}{closed}: [link={pull_request.html_url}]{pull_request.html_url}[/link]")
+            console.print(f"{state_icon} {pull_request.title}{closed}: {link_url(pull_request.html_url)}")
 
 
 def get_branch_remote_url(branch_name=None):
@@ -185,10 +213,12 @@ def get_branch_remote_url(branch_name=None):
     remote = repo.remote(remote_name)
     remote_url = next(remote.urls)
 
-    project_name = GITHUB_PROJECT_PAT.match(remote_url).group(1)
+    github_project_match = GITHUB_PROJECT_PAT.match(remote_url)
+
+    project_name = github_project_match.group('project_name')
 
     github_url = f"{GITHUB_BASE_URL}/{project_name}/tree/{remote_head}"
-    console.print(f"[link={github_url}]{github_url}[/link]")
+    console.print(link_url(github_url))
 
 
 parser = argparse.ArgumentParser()
