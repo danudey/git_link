@@ -21,7 +21,23 @@ from rich import print
 
 console = Console(highlight=False)
 
-GITHUB_PROJECT_PAT = re.compile(r"git@github.com:((.*)/.*)\.git$")
+
+# Parse out github project paths. There are two formats:
+#     'ssh': ssh://git@github.com/owner/project/
+#     'raw': git@github.com:owner/project.git
+#
+# Note we're using Python's re.VERBOSE syntax. If you haven't seen it before:
+#   https://docs.python.org/3/howto/regex.html#using-re-verbose
+
+GITHUB_PROJECT_PAT = re.compile(r"""
+    (:?ssh://)?                 # Match URLs with ssh schemes
+    git@github.com[:/]          # Match either the ssh scheme's '/' or the raw scheme's ':'
+    (?P<project_name>           # Get the project name (username/repository)
+        (?P<github_username>.*) # Get just the username
+        (?P<repo_name>/.*)      # Get just the repository name
+    )                           # (<project_name> ends)
+    (/|\.git)$                  # End with either a trailing slash (ssh) or '.git' (raw)
+    """, re.VERBOSE)
 
 GITHUB_BASE_URL = "https://github.com"
 
@@ -82,7 +98,10 @@ def get_remote_ref_name(branch_name=None):
     remote = repo.remote(remote_name)
     remote_url = next(remote.urls)
 
-    project_name, github_username = GITHUB_PROJECT_PAT.match(remote_url).groups()
+    github_project_match = GITHUB_PROJECT_PAT.match(remote_url)
+
+    project_name = github_project_match.group('project_name')
+    github_username = github_project_match.group('github_username')
 
     return SimpleNamespace(project_name=project_name, github_username=github_username, local_branch=local_branch)
 
