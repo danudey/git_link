@@ -7,20 +7,29 @@ A simple script to get links for branches, commits, or PRs
 import os
 import re
 import sys
+import pickle
 import logging
 import pathlib
 import argparse
+import datetime
+import functools
 
 from types import SimpleNamespace
+from typing import Any
 
+import xdg
 import git
 import yaml
+import requests
 from github import Github
 
 from rich.console import Console
 from rich.logging import RichHandler
 
 from rich import print
+
+PROGNAME = "net.cdslash.git-link"
+CACHE_DIR = xdg.xdg_cache_home().joinpath(PROGNAME)
 
 FORMAT = "%(message)s"
 logging.basicConfig(
@@ -42,16 +51,79 @@ def link_url(url):
 #   https://docs.python.org/3/howto/regex.html#using-re-verbose
 
 GITHUB_PROJECT_PAT = re.compile(r"""
-    (:?ssh://)?                 # Match URLs with ssh schemes
-    git@github.com[:/]          # Match either the ssh scheme's '/' or the raw scheme's ':'
-    (?P<project_name>           # Get the project name (username/repository)
-        (?P<github_username>.*) # Get just the username
-        (?P<repo_name>/.*)      # Get just the repository name
-    )                           # (<project_name> ends)
-    (/|\.git)$                  # End with either a trailing slash (ssh) or '.git' (raw)
+    (:?ssh://)?                     # Match URLs with ssh schemes
+    git@github.com[:/]              # Match either the ssh scheme's '/' or the raw scheme's ':'
+    (?P<project_name>               # Get the project name (username/repository)
+        (?P<github_username>[^/]+)  # Get just the username
+        /                           # separator
+        (?P<repo_name>[^/]+)        # Get just the repository name
+    )                               # (<project_name> ends)
+    (/|\.git)$                      # End with either a trailing slash (ssh) or '.git' (raw)
     """, re.VERBOSE)
 
 GITHUB_BASE_URL = "https://github.com"
+
+SEM_CONFIG_FILE_PATH = "~/.sem.yaml"
+
+class LocalCache:
+    def __init__(self, path):
+        self.path = path
+        self.path.mkdir(parents=True, exist_ok=True)
+    def old(self, key):
+        cache_file = self.path.joinpath(key)
+        mtime = cache_file.stat().st_mtime
+        mdate = datetime.datetime.from_timestamp(mtime)
+        now = datetime.datetime.now()
+        td = now - mdate
+        if td.total_seconds() > 10800:
+            return True
+        return False
+    def get(self, key):
+        try:
+            cache_file = self.path.joinpath(key)
+            if self.old(key):
+                return None
+            data = pickle.load(cache_file.open("rb"))
+            return data
+        except:
+            return None
+    def put(self, key, data):
+        pickle.dump(data, self.path.joinpath(key).open("wb"))
+
+class Semaphore:
+    def __init__(self, token, hostname):
+        self.cache = LocalCache(CACHE_DIR)
+        self.session = requests.Session()
+        self.session.headers.update({"Authorization": f"Token {token}"})
+        self.hostname = hostname
+        self.__projects = {}
+
+        self.__populate_caches()
+
+    def __populate_caches(self):
+        self.__projects = self.cache.get("projects")
+
+    def __call_api_get(self, api_name, **kwargs):
+        url = f"https://{self.hostname}/api/v1alpha/{api_name}"
+        response = self.session.get(url, params=kwargs)
+        return response.json()
+
+    @property
+    def projects(self):
+        if not self.__projects:
+            projects_data = self.__call_api_get("projects")
+            projects_map = {}
+            for project in projects_data:
+                project_name = project['metadata']['name']
+                projects_map[project_name] = project
+            self.__projects = projects_map
+            self.cache.put("projects", projects_map)
+        return self.__projects
+
+    def project_link(self, project):
+        return f"https://{self.hostname}/projects/{project}"
+
+    pipelines = functools.partialmethod(__call_api_get, 'pipelines')
 
 try:
     # Get from environ if possible (in case we want to override)
@@ -76,6 +148,17 @@ except KeyError:
 repo = git.Repo(search_parent_directories=True)
 gh = Github(GITHUB_TOKEN)
 
+try:
+    yaml_file = pathlib.Path(SEM_CONFIG_FILE_PATH).expanduser().open(encoding="utf8")
+    yaml_doc = yaml.safe_load(yaml_file)
+    semaphore_active_context = yaml_doc['active-context']
+    semaphore_data = yaml_doc['contexts'][semaphore_active_context]
+    semaphore_auth = SimpleNamespace(token=semaphore_data['auth']['token'], host=semaphore_data['host'])
+    semaphore = Semaphore(semaphore_auth.token, hostname=semaphore_auth.host)
+except FileNotFoundError:
+    log.warning(f"Semaphore command-line configuration was not found at {SEM_CONFIG_FILE_PATH}. Semaphore-related commands will be unavailable.")
+except KeyError:
+    log.warning(f"Semaphore configuration could not be read from the semaphore CLI configuration file at {SEM_CONFIG_FILE_PATH}. Semaphore-related commands will be unavailable.")
 
 def get_commit_remote_url(commit_or_ref=None):
     """
@@ -111,7 +194,7 @@ def get_remote_ref_name(branch_name=None):
         # remote specified, whatever it's called (it may not be 'origin')
         print(f"Local branch {local_branch} has no tracking branch, searching remotes", file=sys.stderr)
         for remote in repo.remotes:
-            if local_branch.name in remote:
+            if local_branch.name in remote.refs:
                 remote_name = remote.name
                 print(f"Using detected remote {remote}", file=sys.stderr)
         if remote_name is None:
@@ -132,6 +215,9 @@ def get_remote_ref_name(branch_name=None):
 
 
 def get_file_remote_url(filepath=""):
+    if filepath is None:
+        filepath = ""
+    lineno_param = None
     # Get the current file path for the root of the git working directory (resolving symlinks, etc)
     git_root = pathlib.Path(repo.working_dir).resolve()
     # Get the current directory we're in (absolute path, resolving symlinks, etc.)
@@ -139,6 +225,24 @@ def get_file_remote_url(filepath=""):
 
     # Take off the leading "/" if there is one; otherwise we get an absolute path from Path.joinpath()
     filepath_rel = filepath.lstrip("/")
+
+    # Maybe we got line numbers?
+    if not os.path.isfile(filepath_rel):
+        # Let's make the format <filepath>:##-## (which we'll pass to Github as L##-L##)
+        try:
+            test_filepath, test_lineno = filepath_rel.rsplit(":", 1)
+            if os.path.isfile(test_filepath):
+                filepath_rel = test_filepath
+                if "-" in test_lineno:
+                    start_lineno, end_lineno = test_lineno.split("-")
+                    lineno_param = f"#L{start_lineno}-L{end_lineno}"
+                else:
+                    start_lineno, end_lineno = (test_lineno, None)
+                    lineno_param = f"#L{start_lineno}"
+        except ValueError:
+            # Give up, let the rest of the logic handle it
+            pass
+
     # Get the target path (assuming the path is relative to our current directory, which is absolute)
     target_path = cwd_path.joinpath(pathlib.Path(filepath_rel))
 
@@ -161,6 +265,8 @@ def get_file_remote_url(filepath=""):
         sub_path = "tree"
 
     github_url = f"{GITHUB_BASE_URL}/{remote_info.project_name}/{sub_path}/{remote_info.local_branch.name}/{target_file_name}"
+    if lineno_param:
+        github_url = f"{github_url}{lineno_param}"
 
     console.print(link_url(github_url))
 
@@ -221,38 +327,46 @@ def get_branch_remote_url(branch_name=None):
     console.print(link_url(github_url))
 
 
+def get_semaphore_project_url(branch_name=None):
+    if branch_name is None:
+        local_branch = repo.active_branch
+    else:
+        local_branch = repo.branches[branch_name]
+
+    remote_head = local_branch.tracking_branch().remote_head
+    remote_name = local_branch.tracking_branch().remote_name
+
+    remote = repo.remote(remote_name)
+    remote_url = next(remote.urls)
+
+    for project_name, project_data in semaphore.projects.items():
+        if project_data['spec']['repository']['url'] == remote_url:
+            print(link_url(semaphore.project_link(project_name)))
+
+
 parser = argparse.ArgumentParser()
 
-parser.add_argument("command", help="What to run")
+parser.add_argument("command", help="What to run (branch, pr, commit, file, or sem)")
 parser.add_argument("--closed", action="store_true", help="When looking for PRs, also look for closed PRs")
-parser.add_argument("parameter", nargs="*", help="The targets to search for links to (default: current branch)")
+parser.add_argument("parameter", nargs="*", default=[None], help="The targets to search for links to")
 
 args = parser.parse_args()
 
 match args.command:
     case "branch":
-        if args.parameter:
-            for param in args.parameter:
-                get_branch_remote_url(param)
-        else:
-            get_branch_remote_url()
+        for param in args.parameter:
+            get_branch_remote_url(param)
     case "pr":
-        if args.parameter:
-            for param in args.parameter:
-                get_pr_remote_url(param)
-        else:
-            get_pr_remote_url()
+        for param in args.parameter:
+            get_pr_remote_url(param)
     case "commit":
-        if args.parameter:
-            for param in args.parameter:
-                get_commit_remote_url(param)
-        else:
-            get_commit_remote_url()
+        for param in args.parameter:
+            get_commit_remote_url(param)
     case "file":
-        if args.parameter:
-            for param in args.parameter:
-                get_file_remote_url(param)
-        else:
-            get_file_remote_url()
+        for param in args.parameter:
+            get_file_remote_url(param)
+    case "sem":
+        for param in args.parameter:
+            get_semaphore_project_url(param)
     case _:
         print(f"Unrecognized command: {args.command}")
