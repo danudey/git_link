@@ -15,7 +15,6 @@ import datetime
 import functools
 
 from types import SimpleNamespace
-from typing import Any
 
 import xdg
 import git
@@ -25,8 +24,6 @@ from github import Github
 
 from rich.console import Console
 from rich.logging import RichHandler
-
-from rich import print
 
 PROGNAME = "net.cdslash.git-link"
 CACHE_DIR = xdg.xdg_cache_home().joinpath(PROGNAME)
@@ -40,8 +37,10 @@ log = logging.getLogger("rich")
 
 console = Console(highlight=False)
 
-
 def link_url(url):
+    """
+    Take a URL and return a rich-ified link (reduces boilerplate)
+    """
     return f"[link={url}]{url}[/link]"
 
 
@@ -61,7 +60,8 @@ GITHUB_PROJECT_PAT = re.compile(
         /                           # separator
         (?P<repo_name>[^/.]+)       # Get just the repository name
     )                               # (<project_name> ends)
-    (.git|\/|)$                     # raw ends with .git; ssh ends with nothing, a trailing slash, or .git
+    (.git|\/|)$                     # raw ends with .git; ssh ends with nothing,
+                                    # a trailing slash, or .git
     """,
     re.VERBOSE,
 )
@@ -72,35 +72,50 @@ SEM_CONFIG_FILE_PATH = "~/.sem.yaml"
 
 
 class LocalCache:
+    """
+    A dumb easy cache to dumbly, easily cache python objects locally
+    """
     def __init__(self, path):
         self.path = path
         self.path.mkdir(parents=True, exist_ok=True)
 
     def old(self, key):
+        """
+        Returns true if an object is too old to use
+        """
         cache_file = self.path.joinpath(key)
         mtime = cache_file.stat().st_mtime
         mdate = datetime.datetime.from_timestamp(mtime)
         now = datetime.datetime.now()
-        td = now - mdate
-        if td.total_seconds() > 10800:
+        delta = now - mdate
+        if delta.total_seconds() > 10800:
             return True
         return False
 
     def get(self, key):
+        """
+        Gets an object from the cache (unless it's too old)
+        """
         try:
             cache_file = self.path.joinpath(key)
             if self.old(key):
                 return None
             data = pickle.load(cache_file.open("rb"))
             return data
-        except:
+        except (FileNotFoundError, pickle.UnpicklingError):
             return None
 
     def put(self, key, data):
+        """
+        Puts an object into the cache, overwriting any existing object
+        """
         pickle.dump(data, self.path.joinpath(key).open("wb"))
 
 
 class Semaphore:
+    """
+    A simple, caching Semaphore interface
+    """
     def __init__(self, token, hostname):
         self.cache = LocalCache(CACHE_DIR)
         self.session = requests.Session()
@@ -120,6 +135,9 @@ class Semaphore:
 
     @property
     def projects(self):
+        """
+        Represents the projects that exist in Semaphore; cached if possible
+        """
         if not self.__projects:
             projects_data = self.__call_api_get("projects")
             projects_map = {}
@@ -131,6 +149,9 @@ class Semaphore:
         return self.__projects
 
     def project_link(self, project):
+        """
+        Returns the link to the project on Semaphore
+        """
         return f"https://{self.hostname}/projects/{project}"
 
     pipelines = functools.partialmethod(__call_api_get, "pipelines")
@@ -148,14 +169,13 @@ except KeyError:
         yaml_doc = yaml.safe_load(yaml_file)
         GITHUB_TOKEN = yaml_doc["github.com"]["oauth_token"]
     except FileNotFoundError:
-        message = (
+        log.error(
             "In order to use this command, you must either "
             "specify the GITHUB_TOKEN environment variable, "
             "or install and configure the `gh` tool from "
             "GitHub (recommended):\n"
             "    https://cli.github.com/manual/ "
         )
-        log.error(message)
         sys.exit(1)
 
 repo = git.Repo(search_parent_directories=True)
@@ -172,11 +192,13 @@ try:
     semaphore = Semaphore(semaphore_auth.token, hostname=semaphore_auth.host)
 except FileNotFoundError:
     log.warning(
-        f"Semaphore command-line configuration was not found at {SEM_CONFIG_FILE_PATH}. Semaphore-related commands will be unavailable."
+        "Semaphore command-line configuration was not found at %s. "
+        "Semaphore-related commands will be unavailable.", SEM_CONFIG_FILE_PATH
     )
 except KeyError:
     log.warning(
-        f"Semaphore configuration could not be read from the semaphore CLI configuration file at {SEM_CONFIG_FILE_PATH}. Semaphore-related commands will be unavailable."
+        "Semaphore configuration could not be read from the semaphore CLI configuration "
+        "file at %s. Semaphore-related commands will be unavailable.", SEM_CONFIG_FILE_PATH
     )
 
 
@@ -202,6 +224,9 @@ def get_commit_remote_url(commit_or_ref=None):
 
 
 def get_remote_ref_name(branch_name=None):
+    """
+    Get the name of the remote ref for a given branch
+    """
     if branch_name is None:
         local_branch = repo.active_branch
     else:
@@ -212,18 +237,16 @@ def get_remote_ref_name(branch_name=None):
         remote_name = None
         # TODO: Either check all remotes for a matching branch, or get the first
         # remote specified, whatever it's called (it may not be 'origin')
-        print(
+        console.print(
             f"Local branch {local_branch} has no tracking branch, searching remotes",
-            file=sys.stderr,
         )
         for remote in repo.remotes:
             if local_branch.name in remote.refs:
                 remote_name = remote.name
-                print(f"Using detected remote {remote}", file=sys.stderr)
+                console.print(f"Using detected remote {remote}")
         if remote_name is None:
-            print(
+            console.print(
                 "Found no remotes with matching branches, using `origin` anyway.",
-                file=sys.stderr,
             )
             remote_name = "origin"
     else:
@@ -245,6 +268,9 @@ def get_remote_ref_name(branch_name=None):
 
 
 def get_file_remote_url(filepath=""):
+    """
+    Given a file path, get the URL to that file on the web
+    """
     if filepath is None:
         filepath = ""
     lineno_param = None
@@ -253,7 +279,8 @@ def get_file_remote_url(filepath=""):
     # Get the current directory we're in (absolute path, resolving symlinks, etc.)
     cwd_path = pathlib.Path().resolve()
 
-    # Take off the leading "/" if there is one; otherwise we get an absolute path from Path.joinpath()
+    # Take off the leading "/" if there is one; otherwise
+    # we get an absolute path from Path.joinpath()
     filepath_rel = filepath.lstrip("/")
 
     # Maybe we got line numbers?
@@ -273,11 +300,12 @@ def get_file_remote_url(filepath=""):
             # Give up, let the rest of the logic handle it
             pass
 
-    # Get the target path (assuming the path is relative to our current directory, which is absolute)
+    # Get the target path (assuming the path is relative
+    # to our current directory, which is absolute)
     target_path = cwd_path.joinpath(pathlib.Path(filepath_rel))
 
     if not target_path.exists():
-        print(f"Warning: specified path {target_path} does not exist locally")
+        console.print(f"Warning: specified path {target_path} does not exist locally")
 
     # Convert the absolute target_path to a relative path, relative to git_root
     target_file = target_path.relative_to(git_root)
@@ -294,7 +322,14 @@ def get_file_remote_url(filepath=""):
     else:
         sub_path = "tree"
 
-    github_url = f"{GITHUB_BASE_URL}/{remote_info.project_name}/{sub_path}/{remote_info.local_branch.name}/{target_file_name}"
+    github_url = "/".join([
+        GITHUB_BASE_URL,
+        remote_info.project_name,
+        sub_path,
+        remote_info.local_branch.name,
+        target_file_name
+    ])
+
     if lineno_param:
         github_url = f"{github_url}{lineno_param}"
 
@@ -380,12 +415,14 @@ def get_repo_remote_url():
 
 
 def get_semaphore_project_url(branch_name=None):
+    """
+    Gets the URL to the Semaphore project for the current directory
+    """
     if branch_name is None:
         local_branch = repo.active_branch
     else:
         local_branch = repo.branches[branch_name]
 
-    remote_head = local_branch.tracking_branch().remote_head
     remote_name = local_branch.tracking_branch().remote_name
 
     remote = repo.remote(remote_name)
@@ -429,4 +466,4 @@ match args.command:
     case "repo":
         get_repo_remote_url()
     case _:
-        print(f"Unrecognized command: {args.command}")
+        console.print(f"Unrecognized command: {args.command}")
