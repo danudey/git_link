@@ -170,7 +170,7 @@ def get_commit_remote_url(commit_or_ref=None):
         commit_obj = repo.active_branch.commit
     commit_hex = commit_obj.hexsha
 
-    remote = repo.remotes[0]
+    remote = repo.remotes['origin']
     remote_url = next(remote.urls)
 
     github_project_match = GITHUB_PROJECT_PAT.match(remote_url)
