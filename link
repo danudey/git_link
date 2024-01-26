@@ -327,6 +327,21 @@ def get_branch_remote_url(branch_name=None):
     console.print(link_url(github_url))
 
 
+def get_repo_remote_url():
+    """
+    Get the remote URL for the current repository
+    """
+    remote = repo.remotes[0]
+    remote_url = next(remote.urls)
+
+    github_project_match = GITHUB_PROJECT_PAT.match(remote_url)
+
+    project_name = github_project_match.group('project_name')
+
+    github_url = f"{GITHUB_BASE_URL}/{project_name}"
+    console.print(link_url(github_url))
+
+
 def get_semaphore_project_url(branch_name=None):
     if branch_name is None:
         local_branch = repo.active_branch
@@ -368,5 +383,7 @@ match args.command:
     case "sem":
         for param in args.parameter:
             get_semaphore_project_url(param)
+    case "repo":
+        get_repo_remote_url()
     case _:
         print(f"Unrecognized command: {args.command}")
