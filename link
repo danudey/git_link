@@ -56,9 +56,9 @@ GITHUB_PROJECT_PAT = re.compile(r"""
     (?P<project_name>               # Get the project name (username/repository)
         (?P<github_username>[^/]+)  # Get just the username
         /                           # separator
-        (?P<repo_name>[^/]+)        # Get just the repository name
+        (?P<repo_name>[^/.]+)       # Get just the repository name
     )                               # (<project_name> ends)
-    (/|\.git)$                      # End with either a trailing slash (ssh) or '.git' (raw)
+    (.git|\/|)$                     # raw ends with .git; ssh ends with nothing, a trailing slash, or .git
     """, re.VERBOSE)
 
 GITHUB_BASE_URL = "https://github.com"
