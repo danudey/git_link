@@ -87,7 +87,7 @@ class LocalCache:
         """
         cache_file = self.path.joinpath(key)
         mtime = cache_file.stat().st_mtime
-        mdate = datetime.datetime.from_timestamp(mtime)
+        mdate = datetime.datetime.fromtimestamp(mtime)
         now = datetime.datetime.now()
         delta = now - mdate
         if delta.total_seconds() > 10800:
