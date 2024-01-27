@@ -25,6 +25,8 @@ from github import Github
 from rich.console import Console
 from rich.logging import RichHandler
 
+from rich_argparse import RichHelpFormatter
+
 PROGNAME = "net.cdslash.git-link"
 CACHE_DIR = xdg.xdg_cache_home().joinpath(PROGNAME)
 
@@ -433,7 +435,7 @@ def get_semaphore_project_url(branch_name=None):
             print(link_url(semaphore.project_link(project_name)))
 
 
-parser = argparse.ArgumentParser()
+parser = argparse.ArgumentParser(formatter_class=RichHelpFormatter)
 
 parser.add_argument("command", help="What to run (branch, pr, commit, file, or sem)")
 parser.add_argument(
