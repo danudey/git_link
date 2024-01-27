@@ -19,6 +19,7 @@ from types import SimpleNamespace
 import xdg
 import git
 import yaml
+import pydbus
 import requests
 from github import Github
 
@@ -44,6 +45,22 @@ def link_url(url):
     Take a URL and return a rich-ified link (reduces boilerplate)
     """
     return f"[link={url}]{url}[/link]"
+
+def get_gh_token_from_dbus():
+    """
+    Fetch the Github token from SecretServer via dbus
+    """
+    bus = pydbus.SessionBus()
+    secret_service = bus.get(".secrets")
+    items, _ = secret_service.SearchItems([("username",""), ("service","gh:github.com")])
+    _, secret_session = secret_service.OpenSession("plain", pydbus.Variant.new_string(""))
+
+    secrets = secret_service.GetSecrets(items, secret_session)
+    _, _, secret_raw, _ = secrets[items[0]]
+
+    secret_bytes = bytes(secret_raw)
+    token = secret_bytes.decode()
+    return token
 
 
 # Parse out github project paths. There are two formats:
@@ -170,6 +187,9 @@ except KeyError:
         )
         yaml_doc = yaml.safe_load(yaml_file)
         GITHUB_TOKEN = yaml_doc["github.com"]["oauth_token"]
+    except KeyError:
+        # Maybe they moved the secret to the dbus secretserver?
+        GITHUB_TOKEN = get_gh_token_from_dbus()
     except FileNotFoundError:
         log.error(
             "In order to use this command, you must either "
